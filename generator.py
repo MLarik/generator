@@ -3,15 +3,15 @@ import yaml
 def generator(f_schema):
     cfg = yaml.load(open(f_schema))
     statements = []
-    for i in range(len(cfg)):
-        string = 'create table(\n'
-        current_key = cfg.keys(i)
-        string += current_key
-        fields = cfg.get(current_key).get('fields')
-        for j in range(len(fields)):
-            current_key2 = fields.keys(j)
-            string += '    ' + current_key2 + fields.get(current_key2) + '\n'
+    for i in cfg:
+        string = '\n'
+        string += 'create table(\n' + i + '\n'
+        fields = cfg.get(i).get('fields')
+        for j in fields:
+            string += '    ' + j + ' ' + fields.get(j) + '\n'
+        statements.append(string + ');')
+    return statements
 
-        string += ');'
-
-generator('schema.yml')
+# a = generator('schema.yml')
+# print(a[0])
+# print(a[1])

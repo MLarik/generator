@@ -1,22 +1,80 @@
 import yaml
-# from datetime import datetime
 
-def generator(f_schema):
-    cfg = yaml.load(open(f_schema))
-    statements = []
-    for i in cfg:
-        string = '\n'
-        string += 'create table(\n' + i + '\n'
-        fields = cfg.get(i).get('fields')
-        string += '    id serial primary key ' + '\n'
-        for fields_key in fields:
-            string += '    ' + fields_key + ' ' + fields.get(fields_key) + '\n'
-        string += '    created ' + 'datetime\n'
-        string += '    updated ' + 'datetime\n'
-        statements.append(string + ');')
+class Generator:
+    def __init__(self, schema_path):
+        self.schema_path = schema_path
+        self.tables = []
+        self.triggers = []
+        self.data = None
 
-    return statements
+    def read_schema(self):
+        with open(self.schema_path, 'r') as f:
+            self.data = yaml.load(f.read())
 
-# a = generator('schema.yml')
-# print(a[0])
-# print(a[1])
+    def create_table(self, name, data):
+        table = (
+            'DROP TABLE IF EXISTS {table_name};\n'
+            'CREATE TABLE {table_name} (\n'
+            '  id SERIAL NOT NULL PRIMARY KEY,\n'
+            '  {fields},\n'
+            '  created TIMESTAMP NOT NULL,\n'
+            '  updated TIMESTAMP NOT NULL\n'
+            ');\n'
+        ).format(
+            table_name=name.lower(),
+            fields=',\n  '.join(
+                [f'{k} {v.upper()}' for k, v in data['fields'].items()]
+            )
+        )
+        self.tables.append(table)
+
+    def trigger_for_created(self, name):
+        trigger = (
+            'CREATE OR REPLACE FUNCTION updated() RETURNS TRIGGER\n'
+            'AS $$\n'
+            'BEGIN\n'
+            '  UPDATE {table_name} SET updated = NOW() WHERE id = OLD.id;\n\n'
+            '  RETURN OLD;\n'
+            'END;\n'
+            '$$ LANGUAGE plpgsql;\n\n'
+            'DROP TRIGGER IF EXISTS tr_updated ON {table_name};\n'
+            'CREATE TRIGGER tr_updated AFTER UPDATE ON {table_name};\n'
+            'FOR EACH ROW EXECUTE PROCEDURE updated();\n'
+
+        ).format(
+            table_name=name.lower()
+        )
+        return trigger
+
+    def trigger_for_updated(self, name):
+        trigger = (
+            'CREATE OR REPLACE FUNCTION created() RETURNS TRIGGER\n'
+            'AS $$\n'
+            'BEGIN\n'
+            '  UPDATE {table_name} SET created = NOW() WHERE id = OLD.id;\n\n'
+            '  RETURN OLD;\n'
+            'END;\n'
+            '$$ LANGUAGE plpgsql;\n\n'
+            'DROP TRIGGER IF EXISTS tr_created ON {table_name};\n'
+            'CREATE TRIGGER tr_created AFTER INSERT ON {table_name}\n'
+            'FOR EACH ROW EXECUTE PROCEDURE created();\n'
+
+        ).format(
+            table_name=name.lower()
+        )
+        return trigger
+
+    def generate(self):
+        self.read_schema()
+
+        for table, data in self.data.items():
+            self.create_table(table, data)
+
+        for i in self.data:
+            self.triggers.append(self.trigger_for_created(i))
+            self.triggers.append(self.trigger_for_updated(i))
+
+        with open('db.sql', 'w') as f:
+            f.write('\n'.join(self.tables))
+            f.write('\n')
+            f.write('\n'.join(self.triggers))

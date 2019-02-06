@@ -11,8 +11,10 @@ class Generator(object):
     def read_schema(self):
         with open(self.schema_path, 'r') as f:
             self.data = yaml.load(f.read())
+        # print(self.data['Category']['relations'])
 
-    def create_table(self, name, data):
+    @staticmethod
+    def create_table(name, data):
         table = (
             'DROP TABLE IF EXISTS {table_name};\n'
             'CREATE TABLE {table_name} (\n'
@@ -23,13 +25,14 @@ class Generator(object):
             ');\n'
         ).format(
             table_name=name.lower(),
-            fields=',\n  '.join(
+            fields=',\n    '.join(
                 [f'{k} {v.upper()}' for k, v in data['fields'].items()]
             )
         )
-        self.tables.append(table)
+        return table
 
-    def trigger_for_created(self, name):
+    @staticmethod
+    def trigger_for_created(name):
         trigger = (
             'CREATE OR REPLACE FUNCTION updated() RETURNS TRIGGER\n'
             'AS $$\n'
@@ -39,7 +42,7 @@ class Generator(object):
             'END;\n'
             '$$ LANGUAGE plpgsql;\n\n'
             'DROP TRIGGER IF EXISTS tr_updated ON {table_name};\n'
-            'CREATE TRIGGER tr_updated AFTER UPDATE ON {table_name};\n'
+            'CREATE TRIGGER tr_updated AFTER UPDATE ON {table_name}\n'
             'FOR EACH ROW EXECUTE PROCEDURE updated();\n'
 
         ).format(
@@ -47,7 +50,8 @@ class Generator(object):
         )
         return trigger
 
-    def trigger_for_updated(self, name):
+    @staticmethod
+    def trigger_for_updated(name):
         trigger = (
             'CREATE OR REPLACE FUNCTION created() RETURNS TRIGGER\n'
             'AS $$\n'
@@ -65,9 +69,32 @@ class Generator(object):
         )
         return trigger
 
+    def create_relations(self, table):
+        rel = self.data[table]['relations']
+        keys = list(rel.keys())
+        result = ''
+
+        for i in keys:
+            t = table.lower()
+            t2 = i.lower()
+
+            if rel[i] == 'one' and self.data[i]['relations'][table] == 'many':
+                return f'ALTER TABLE {t} ADD COLUMN {t2}_id INTEGER REFERENCES {t2}(id);\n'
+
+            if rel[i] == 'many' and self.data[i]['relations'][table] == 'many':
+                result = f'DROP TABLE IF EXISTS {t}_{t2};\n' \
+                         f'CREATE TABLE {t}_{t2} (\n' \
+                         f'     {t}_id INTEGER REFERENCES {t}(id),\n' \
+                         f'     {t2}_id INTEGER REFERENCES {t2}(id)\n' \
+                          ');\n'
+                del self.data[i]['relations'][table]
+
+        return result
+
     def generate_tables(self):
         for table, data in self.data.items():
-            self.create_table(table, data)
+            self.tables.append(self.create_table(table, data))
+            self.tables.append(self.create_relations(table))
 
     def generate_triggers(self):
         for i in self.data:
